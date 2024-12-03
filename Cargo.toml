@@ -1,0 +1,16 @@
+[package]
+name = "scattering_problems"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quantum = { git = "https://github.com/Wleter/quantum.git", features = ["faer", "spins"] }
+scattering_solver = { git = "https://github.com/Wleter/scattering_solver.git" }
+abm = { git = "https://github.com/Wleter/abm.git" }
+faer = { version = "0.19.4" }
+num = "0.4.3"
+rayon = "1.10"
+indicatif = { version = "0.17.9", features = ["rayon"] }
+
+[profile.dev]
+opt-level = 3
