@@ -102,7 +102,7 @@ impl Problems {
             let step_rule = MultiStepRule::default();
             let mut numerov = FaerRatioNumerov::new(potential, &li2, step_rule, boundary);
 
-            numerov.propagate_to(1e4);
+            numerov.propagate_to(1.5e3);
             numerov.data.calculate_s_matrix(channel).get_scattering_length()
         })
         .collect::<Vec<Complex64>>();
