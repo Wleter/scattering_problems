@@ -1,12 +1,9 @@
 use abm::{abm_states::HifiStates, DoubleHifiProblemBuilder};
 use faer::Mat;
 use quantum::{cast_variant, params::{particle_factory::RotConst, particles::Particles}, states::{operator::Operator, state::State, state_type::StateType, States}, units::{energy_units::Energy, Au}};
-use scattering_solver::potentials::{composite_potential::Composite, dispersion_potential::Dispersion, masked_potential::MaskedPotential, pair_potential::PairPotential, potential::SimplePotential};
+use scattering_solver::potentials::{composite_potential::Composite, dispersion_potential::Dispersion, masked_potential::MaskedPotential, pair_potential::PairPotential, potential::{Potential, SimplePotential}};
 
 use crate::utility::{percival_coef, RotorJMax, RotorJTot, RotorLMax};
-
-pub type AlkaliRotorPotential<P, V> = PairPotential<Composite<MaskedPotential<Mat<f64>, P>>, Composite<MaskedPotential<Mat<f64>, V>>>;
-pub type HifiRotorPotential = Composite<MaskedPotential<Mat<f64>, Dispersion>>;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum RotorAtomStates {
@@ -41,7 +38,7 @@ where
         }
     }
 
-    pub fn build(self, mag_field: f64, particles: &Particles) -> AlkaliDiatomAtomProblem<P, V> {
+    pub fn build(self, mag_field: f64, particles: &Particles) -> AlkaliDiatomAtomProblem<impl Potential<Space = Mat<f64>>> {
         let l_max = particles.get::<RotorLMax>().expect("Did not find SystemLMax parameter in particles").0;
         let j_max = particles.get::<RotorJMax>().expect("Did not find RotorJMax parameter in particles").0;
         let j_tot = particles.get::<RotorJTot>().map_or(0, |x| x.0);
@@ -148,11 +145,7 @@ where
     }
 }
 
-pub struct AlkaliDiatomAtomProblem<P, V> 
-where 
-    P: SimplePotential,
-    V: SimplePotential
-{
-    pub potential: PairPotential<HifiRotorPotential, AlkaliRotorPotential<P, V>>,
+pub struct AlkaliDiatomAtomProblem<P: Potential<Space = Mat<f64>>> {
+    pub potential: P,
     pub channel_energies: Vec<Energy<Au>>,
 }

@@ -6,7 +6,7 @@ use indicatif::{ParallelProgressIterator, ProgressIterator};
 use num::complex::Complex64;
 use quantum::{params::{particle_factory, particles::Particles}, problem_selector::{get_args, ProblemSelector}, problems_impl, units::{energy_units::{Energy, Kelvin, MHz}, Au, Unit}, utility::linspace};
 use scattering_problems::alkali_atoms::{AlkaliAtomsProblem, AlkaliAtomsProblemBuilder};
-use scattering_solver::{boundary::{Boundary, Direction}, numerovs::{multi_numerov::faer_backed::FaerRatioNumerov, propagator::MultiStepRule}, observables::s_matrix::HasSMatrix, potentials::{composite_potential::Composite, dispersion_potential::Dispersion, potential::{Potential, SimplePotential}}, utility::save_data};
+use scattering_solver::{boundary::{Boundary, Direction}, numerovs::{multi_numerov::faer_backed::FaerRatioNumerov, propagator::MultiStepRule}, observables::s_matrix::HasSMatrix, potentials::{composite_potential::Composite, dispersion_potential::Dispersion, potential::Potential}, utility::save_data};
 
 use rayon::prelude::*;
 
@@ -22,7 +22,7 @@ problems_impl!(Problems, "Li2 Feshbach",
 );
 
 impl Problems {
-    fn get_potential(projection: i32, mag_field: f64) -> AlkaliAtomsProblem<impl SimplePotential, impl SimplePotential> {
+    fn get_potential(projection: i32, mag_field: f64) -> AlkaliAtomsProblem<impl Potential<Space = Mat<f64>>> {
         let first = HifiProblemBuilder::new(1, 2)
             .with_hyperfine_coupling(Energy(228.2 / 1.5, MHz).to_au());
 
