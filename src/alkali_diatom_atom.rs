@@ -1,18 +1,17 @@
-use abm::{consts::Consts, get_hifi, get_zeeman_prop, utility::diagonalize, DoubleHifiProblemBuilder};
+use abm::{abm_states::HifiStates, DoubleHifiProblemBuilder};
 use faer::Mat;
-use quantum::{states::{operator::Operator, state::State, state_type::StateType, States, StatesBasis}, units::{energy_units::Energy, Au}};
-use scattering_solver::potentials::{pair_potential::PairPotential, potential::SimplePotential};
+use quantum::{cast_variant, params::{particle_factory::RotConst, particles::Particles}, states::{operator::Operator, state::State, state_type::StateType, States}, units::{energy_units::Energy, Au}};
+use scattering_solver::potentials::{composite_potential::Composite, dispersion_potential::Dispersion, masked_potential::MaskedPotential, pair_potential::PairPotential, potential::SimplePotential};
 
-use crate::alkali_atoms::{AlkaliPotential, HifiPotential};
+use crate::utility::{percival_coef, RotorJMax, RotorJTot, RotorLMax};
+
+pub type AlkaliRotorPotential<P, V> = PairPotential<Composite<MaskedPotential<Mat<f64>, P>>, Composite<MaskedPotential<Mat<f64>, V>>>;
+pub type HifiRotorPotential = Composite<MaskedPotential<Mat<f64>, Dispersion>>;
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum RotorAtomState {
+pub enum RotorAtomStates {
     SystemL,
     RotorJ,
-    RotorS(u32),
-    RotorI(u32),
-    AtomS(u32),
-    AtomI(u32)
 }
 
 #[derive(Clone)]
@@ -22,8 +21,8 @@ where
     V: SimplePotential
 {
     hifi_problem: DoubleHifiProblemBuilder,
-    triplet_potential: P,
-    singlet_potential: V,
+    triplet_potential: Vec<(u32, P)>,
+    singlet_potential: Vec<(u32, V)>,
 }
 
 impl<P, V> AlkaliDiatomAtomProblemBuilder<P, V> 
@@ -31,62 +30,121 @@ where
     P: SimplePotential,
     V: SimplePotential
 {
-    pub fn new(hifi_problem: DoubleHifiProblemBuilder, triplet_potential: P, singlet_potential: V) -> Self {
+    pub fn new(hifi_problem: DoubleHifiProblemBuilder, triplet: Vec<(u32, P)>, singlet: Vec<(u32, V)>) -> Self {
         assert!(hifi_problem.first.s == 1);
         assert!(hifi_problem.second.s == 1);
 
         Self {
             hifi_problem,
-            triplet_potential,
-            singlet_potential,
+            triplet_potential: triplet,
+            singlet_potential: singlet,
         }
     }
 
-    pub fn build(self, mag_field: f64, l_max: u32, j_max: u32) -> AlkaliDiatomAtomProblem<P, V> {
-        let s_rotor = self.hifi_problem.first.s;
-        let i_rotor = self.hifi_problem.first.i;
-        let s_atom = self.hifi_problem.second.s;
-        let i_atom = self.hifi_problem.second.i;
-        let m_tot = self.hifi_problem.total_projection.expect("for calculations use specific projection");
-
-        assert!(s_rotor == 1);
-        assert!(s_atom == 1);
-
-        let ls = (0..=l_max as i32).collect();
-        let system_l = State::new(RotorAtomState::SystemL, ls);
-        let js = (0..=j_max as i32).collect();
-        let rotor_j = State::new(RotorAtomState::RotorJ, js);
+    pub fn build(self, mag_field: f64, particles: &Particles) -> AlkaliDiatomAtomProblem<P, V> {
+        let l_max = particles.get::<RotorLMax>().expect("Did not find SystemLMax parameter in particles").0;
+        let j_max = particles.get::<RotorJMax>().expect("Did not find RotorJMax parameter in particles").0;
+        let j_tot = particles.get::<RotorJTot>().map_or(0, |x| x.0);
+        // todo! change to rotor particle having RotConst
+        let rot_const = particles.get::<RotConst>().expect("Did not find RotConst parameter in the first particle").0;
         
-        let rotor_s = State::new(RotorAtomState::AtomS(1), vec![-1, 1]);
-        let mi = (-(i_rotor as i32)..=(i_rotor as i32)).step_by(2).collect();
-        let rotor_i = State::new(RotorAtomState::RotorI(i_rotor), mi);
-    
-        let atom_s = State::new(RotorAtomState::AtomS(1), vec![-1, 1]);
-        let mi = (-(i_atom as i32)..=(i_atom as i32)).step_by(2).collect();
-        let atom_i = State::new(RotorAtomState::AtomI(i_atom), mi);
+        let all_even = self.triplet_potential.iter().all(|(lambda, _)| lambda & 1 == 0)
+            && self.singlet_potential.iter().all(|(lambda, _)| lambda & 1 == 0);
 
-        let gamma_e = -2.0 * Consts::BOHR_MAG;
+        let ls = if all_even { (0..=l_max).step_by(2).collect() } else { (0..=l_max).collect() };
+        let system_l = State::new(RotorAtomStates::SystemL, ls);
+        let js = if all_even { (0..=j_max).step_by(2).collect() } else { (0..=j_max).collect() };
+        let rotor_j = State::new(RotorAtomStates::RotorJ, js);
         
-        let mut states = States::default();
-        states.push_state(StateType::Irreducible(system_l))
-            .push_state(StateType::Irreducible(rotor_j))
-            .push_state(StateType::Irreducible(rotor_s))
-            .push_state(StateType::Irreducible(rotor_i))
-            .push_state(StateType::Irreducible(atom_s))
-            .push_state(StateType::Irreducible(atom_i));
+        let mut rotor_states = States::default();
+        rotor_states.push_state(StateType::Irreducible(system_l))
+            .push_state(StateType::Irreducible(rotor_j));
 
-        let basis: StatesBasis<_, _> = states.iter_elements()
-            .filter(|s| {
-                s.pairwise_iter()
-                    .filter(|&(s, _)| !matches!(s, RotorAtomState::RotorJ | RotorAtomState::SystemL))
-                    .map(|(_, m)| *m)
-                    .sum::<i32>() == m_tot
-                }
-            )
-            .collect();
-        assert!(basis.is_empty(), "no states with total projection {m_tot}");
+        let rotor_basis = rotor_states.get_basis();
+        let hifi_problem = self.hifi_problem.build();
+        let hifi_basis = hifi_problem.get_basis();
 
-        todo!()
+        let id_rotor = Mat::<f64>::identity(rotor_basis.len(), rotor_basis.len());
+        let id_hifi = Mat::<f64>::identity(hifi_basis.len(), hifi_basis.len());
+        
+        let hifi_states = hifi_problem.states_at(mag_field);
+
+        let l_centrifugal = Operator::from_diagonal_mel(&rotor_basis, [RotorAtomStates::SystemL], |[l]| {
+            (l.1 * (l.1 + 1)) as f64
+        });
+        let l_centrifugal_mask = l_centrifugal.kron(&id_hifi);
+        let l_potential = Dispersion::new(1. / 2. * particles.red_mass(), -2);
+
+        let j_centrifugal = Operator::from_diagonal_mel(&rotor_basis, [RotorAtomStates::RotorJ], |[j]| {
+            (j.1 * (j.1 + 1)) as f64
+        });
+        let j_centrifugal_mask = j_centrifugal.kron(&id_hifi);
+        let j_potential = Dispersion::new(rot_const, 0);
+
+        let hifi_masking = id_rotor.kron(Mat::from_fn(hifi_basis.len(), hifi_basis.len(), |i, j| {
+            if i == j { hifi_states.0[i].to_au() } else { 0. }
+        }));
+        let hifi_potential = Dispersion::new(1., 0);
+
+        let mut hifi_rotor_potential = Composite::new(MaskedPotential::new(hifi_potential, hifi_masking));
+        hifi_rotor_potential.add_potential(MaskedPotential::new(l_potential, l_centrifugal_mask))
+            .add_potential(MaskedPotential::new(j_potential, j_centrifugal_mask));
+
+        let triplet_masking = Operator::from_diagonal_mel(hifi_basis, [HifiStates::ElectronDSpin(0)], |[e]| {
+            let spin_e = cast_variant!(e.0, HifiStates::ElectronDSpin);
+
+            if spin_e == 2 { 1. } else { 0. }
+        });
+        let triplet_hifi_masking = hifi_states.1.transpose() * triplet_masking.as_ref() * &hifi_states.1;
+
+        let singlet_masking = Operator::from_diagonal_mel(hifi_basis, [HifiStates::ElectronDSpin(0)], |[e]| {
+            let spin_e = cast_variant!(e.0, HifiStates::ElectronDSpin);
+
+            if spin_e == 0 { 1. } else { 0. }
+        });
+        let singlet_hifi_masking = hifi_states.1.transpose() * singlet_masking.as_ref() * &hifi_states.1;
+
+        let mut triplet_potentials = self.triplet_potential.into_iter()
+            .map(|(lambda, potential)| {
+                let rotor_masking = Operator::from_mel(&rotor_basis, [RotorAtomStates::SystemL, RotorAtomStates::RotorJ], |[l, j]| {
+                    let lj_left = (l.bra.1, j.bra.1);
+                    let lj_right = (l.ket.1, j.ket.1);
+
+                    percival_coef(lambda, lj_left, lj_right, j_tot)
+                });
+
+                MaskedPotential::new(potential, rotor_masking.kron(&triplet_hifi_masking))
+            });
+
+        let mut triplet_potential = Composite::new(triplet_potentials.next().expect("No triplet potentials found"));
+        for p in triplet_potentials {
+            triplet_potential.add_potential(p);
+        }
+
+        let mut singlet_potentials = self.singlet_potential.into_iter()
+            .map(|(lambda, potential)| {
+                let rotor_masking = Operator::from_mel(&rotor_basis, [RotorAtomStates::SystemL, RotorAtomStates::RotorJ], |[l, j]| {
+                    let lj_left = (l.bra.1, j.bra.1);
+                    let lj_right = (l.ket.1, j.ket.1);
+
+                    percival_coef(lambda, lj_left, lj_right, j_tot)
+                });
+
+                MaskedPotential::new(potential, rotor_masking.kron(&singlet_hifi_masking))
+            });
+
+        let mut singlet_potential = Composite::new(singlet_potentials.next().expect("No singlet potentials found"));
+        for p in singlet_potentials {
+            singlet_potential.add_potential(p);
+        }
+
+        let potential = PairPotential::new(triplet_potential, singlet_potential);
+        let full_potential = PairPotential::new(hifi_rotor_potential, potential);
+
+        AlkaliDiatomAtomProblem {
+            potential: full_potential,
+            channel_energies: hifi_states.0,
+        }
     }
 }
 
@@ -95,6 +153,6 @@ where
     P: SimplePotential,
     V: SimplePotential
 {
-    pub potential: PairPotential<HifiPotential, AlkaliPotential<P, V>>,
+    pub potential: PairPotential<HifiRotorPotential, AlkaliRotorPotential<P, V>>,
     pub channel_energies: Vec<Energy<Au>>,
 }

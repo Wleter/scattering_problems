@@ -85,7 +85,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "clebsch-gordan"
 version = "0.3.0"
-source = "git+https://github.com/Wleter/clebsch-gordan#458fc667702dde7da3ef2a88be84bb2ae6ac3493"
+source = "git+https://github.com/Wleter/clebsch-gordan.git#458fc667702dde7da3ef2a88be84bb2ae6ac3493"
 dependencies = [
  "lazy_static",
  "lru",
@@ -940,6 +940,7 @@ name = "scattering_problems"
 version = "0.1.0"
 dependencies = [
  "abm",
+ "clebsch-gordan",
  "faer",
  "indicatif",
  "num",

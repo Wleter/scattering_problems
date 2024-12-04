@@ -11,6 +11,7 @@ faer = { version = "0.19.4" }
 num = "0.4.3"
 rayon = "1.10"
 indicatif = { version = "0.17.9", features = ["rayon"] }
+clebsch-gordan = { git = "https://github.com/Wleter/clebsch-gordan.git" }
 
 [profile.dev]
 opt-level = 3
