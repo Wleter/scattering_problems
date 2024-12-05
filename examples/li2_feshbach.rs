@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use abm::{DoubleHifiProblemBuilder, HifiProblemBuilder, Symmetry};
 use faer::Mat;
+use hhmmss::Hhmmss;
 use indicatif::{ParallelProgressIterator, ProgressIterator};
 use num::complex::Complex64;
 use quantum::{params::{particle_factory, particles::Particles}, problem_selector::{get_args, ProblemSelector}, problems_impl, units::{energy_units::{Energy, Kelvin, MHz}, Au, Unit}, utility::linspace};
@@ -108,7 +109,7 @@ impl Problems {
         .collect::<Vec<Complex64>>();
 
         let elapsed = start.elapsed();
-        println!("calculated in {:.2} s", elapsed.as_secs_f64());
+        println!("calculated in {}", elapsed.hhmmssxxx());
 
         let scatterings_re = scatterings.iter().map(|x| x.re).collect();
         let scatterings_im = scatterings.iter().map(|x| x.im).collect();

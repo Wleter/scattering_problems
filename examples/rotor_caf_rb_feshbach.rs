@@ -1,7 +1,9 @@
+use core::f64;
 use std::time::Instant;
 
 use abm::{DoubleHifiProblemBuilder, HifiProblemBuilder};
 use faer::Mat;
+use hhmmss::Hhmmss;
 use indicatif::ParallelProgressIterator;
 use num::complex::Complex64;
 use quantum::{params::{particle::Particle, particle_factory::{self, RotConst}, particles::Particles}, problem_selector::{get_args, ProblemSelector}, problems_impl, units::{energy_units::{Energy, GHz, Kelvin, MHz}, mass_units::{Dalton, Mass}, Au, Unit}, utility::linspace};
@@ -17,10 +19,12 @@ pub fn main() {
 struct Problems;
 
 problems_impl!(Problems, "CaF + Rb Feshbach",
-    "isotropic potential" => |_| Self::potentials_iso(),
+    "isotropic potential" => |_| Self::potentials(),
     "single channel isotropic scatterings" => |_| Self::single_chan_scatterings(),
     "isotropic feshbach" => |_| Self::feshbach_iso(),
-    "rotor feshbach" => |_| Self::feshbach_rotor()
+    "rotor feshbach" => |_| Self::feshbach_rotor(),
+    "rotor potentials" => |_| Self::rotor_potentials()
+
 );
 
 impl Problems {
@@ -44,7 +48,7 @@ impl Problems {
 
     fn potential_aniso() -> Composite<Dispersion> {
         let mut singlet = Composite::new(Dispersion::new(-100., -6));
-        singlet.add_potential(Dispersion::new(5e6, -12));
+        singlet.add_potential(Dispersion::new(1e7, -12));
 
         singlet
     }
@@ -78,14 +82,16 @@ impl Problems {
         particles
     }
 
-    fn potentials_iso() {
+    fn potentials() {
         let particles = Self::get_particles(Energy(1e-7, Kelvin));
         let triplet = Self::triplet_iso(0);
         let singlet = Self::singlet_iso(0);
+        let aniso = Self::potential_aniso();
 
         let distances = linspace(4., 20., 200);
         let triplet_values = distances.iter().map(|&x| triplet.value(x)).collect();
         let singlet_values = distances.iter().map(|&x| singlet.value(x)).collect();
+        let aniso_values = distances.iter().map(|&x| aniso.value(x)).collect();
 
         for config in [0, 1, 2] {
             println!("{config}");
@@ -103,8 +109,8 @@ impl Problems {
             println!("{:.2}", numerov.data.calculate_s_matrix().unwrap().get_scattering_length().re);
         }
 
-        let data = vec![distances, triplet_values, singlet_values];
-        save_data("CaF_Rb_iso", "distance\ttriplet\tsinglet", &data)
+        let data = vec![distances, triplet_values, singlet_values, aniso_values];
+        save_data("CaF_Rb_iso", "distance\ttriplet\tsinglet\taniso", &data)
             .unwrap();
     }
 
@@ -181,7 +187,7 @@ impl Problems {
         .collect::<Vec<Complex64>>();
 
         let elapsed = start.elapsed();
-        println!("calculated in {:.2} s", elapsed.as_secs_f64());
+        println!("calculated in {}", elapsed.hhmmssxxx());
 
         let scatterings_re = scatterings.iter().map(|x| x.re).collect();
         let scatterings_im = scatterings.iter().map(|x| x.im).collect();
@@ -223,7 +229,7 @@ impl Problems {
         let config_singlet = 0;
 
         let energy_relative = Energy(1e-7, Kelvin);
-        let mag_fields = linspace(0., 1000., 1000);
+        let mag_fields = linspace(0., 1000., 4000);
 
         ///////////////////////////////////
 
@@ -239,8 +245,8 @@ impl Problems {
             let potential = &alkali_problem.potential;
 
             let id = Mat::<f64>::identity(potential.size(), potential.size());
-            let boundary = Boundary::new(7.2, Direction::Outwards, (1.001 * &id, 1.002 * &id));
-            let step_rule = MultiStepRule::default();
+            let boundary = Boundary::new(8.5, Direction::Outwards, (1.001 * &id, 1.002 * &id));
+            let step_rule = MultiStepRule::new(1e-3, f64::INFINITY, 500.);
             let mut numerov = FaerRatioNumerov::new(potential, &caf_rb, step_rule, boundary);
 
             numerov.propagate_to(1.5e3);
@@ -249,7 +255,7 @@ impl Problems {
         .collect::<Vec<Complex64>>();
 
         let elapsed = start.elapsed();
-        println!("calculated in {:.2} s", elapsed.as_secs_f64());
+        println!("calculated in {}", elapsed.hhmmssxxx());
 
         let scatterings_re = scatterings.iter().map(|x| x.re).collect();
         let scatterings_im = scatterings.iter().map(|x| x.im).collect();
@@ -258,6 +264,47 @@ impl Problems {
         let data = vec![mag_fields, scatterings_re, scatterings_im];
 
         save_data(&format!("CaF_Rb_scatterings_{config_triplet}_{config_singlet}"), header, &data)
+            .unwrap()
+    }
+
+    fn rotor_potentials() {
+        ///////////////////////////////////
+
+        let projection = 4;
+        let channel = 0;
+
+        let config_triplet = 0;
+        let config_singlet = 0;
+
+        let energy_relative = Energy(1e-7, Kelvin);
+        let distances = linspace(4.2, 30., 200);
+
+        ///////////////////////////////////
+
+        let mut caf_rb = Self::get_particles(energy_relative);
+        let alkali_problem = Self::get_potential(config_triplet, config_singlet, projection, 100., &caf_rb);
+
+        let energy = energy_relative.to_au() + alkali_problem.channel_energies[channel].to_au();
+
+        caf_rb.insert(Energy(energy, Au));
+        let potential = &alkali_problem.potential;
+        
+        let mut mat = Mat::zeros(potential.size(), potential.size());
+        let potentials: Vec<Mat<f64>> = distances.iter().map(|&x| {
+                potential.value_inplace(x, &mut mat);
+
+                mat.to_owned()
+            })
+            .collect();
+        let header = "distances\tpotentials";
+        let mut data = vec![distances];
+        for i in 0..potential.size() {
+            for j in 0..potential.size() {
+                data.push(potentials.iter().map(|p| p[(i, j)]).collect());
+            }
+        }
+
+        save_data(&format!("CaF_Rb_potentials_{config_triplet}_{config_singlet}"), header, &data)
             .unwrap()
     }
 }

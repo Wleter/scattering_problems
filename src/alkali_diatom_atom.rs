@@ -70,7 +70,7 @@ where
             (l.1 * (l.1 + 1)) as f64
         });
         let l_centrifugal_mask = l_centrifugal.kron(&id_hifi);
-        let l_potential = Dispersion::new(1. / 2. * particles.red_mass(), -2);
+        let l_potential = Dispersion::new(0.5 / particles.red_mass(), -2);
 
         let j_centrifugal = Operator::from_diagonal_mel(&rotor_basis, [RotorAtomStates::RotorJ], |[j]| {
             (j.1 * (j.1 + 1)) as f64
